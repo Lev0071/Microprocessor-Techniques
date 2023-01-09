@@ -1,0 +1,12 @@
+.\rvmdk\pong.o: pong.c
+.\rvmdk\pong.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
+.\rvmdk\pong.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+.\rvmdk\pong.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdbool.h
+.\rvmdk\pong.o: inc/hw_ints.h
+.\rvmdk\pong.o: inc/hw_memmap.h
+.\rvmdk\pong.o: driverlib/gpio.h
+.\rvmdk\pong.o: driverlib/pin_map.h
+.\rvmdk\pong.o: driverlib/rom.h
+.\rvmdk\pong.o: driverlib/sysctl.h
+.\rvmdk\pong.o: driverlib/uart.h
+.\rvmdk\pong.o: lcd.h

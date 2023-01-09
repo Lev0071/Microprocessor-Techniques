@@ -1,0 +1,635 @@
+//*****************************************************************************
+//
+// pong.c - Tiva-based classic pong game  (e.g. http://www.ponggame.org)
+//
+//*****************************************************************************
+
+#include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
+
+// tiva-c stuff - for uart/ints
+#include "inc/hw_ints.h"
+#include "inc/hw_memmap.h"
+//#include "driverlib/debug.h"
+//#include "driverlib/fpu.h"
+#include "driverlib/gpio.h"
+//#include "driverlib/interrupt.h"
+#include "driverlib/pin_map.h"
+#include "driverlib/rom.h"
+#include "driverlib/sysctl.h"
+#include "driverlib/uart.h"
+
+// lecturer stuff - for TG12864H3-05A LCD
+#include "lcd.h"
+#define SCLK GPIO_PIN_0 // Port D
+#define CS GPIO_PIN_1 // Port D
+#define A0 GPIO_PIN_2 // Port D
+#define TX GPIO_PIN_3 // Port D
+#define GRN GPIO_PIN_1 // Port E
+#define BLU GPIO_PIN_2 // Port E
+#define RED GPIO_PIN_3 // Port E
+#define RST GPIO_PIN_1 // Port F
+
+// The error routine that is called if the driver library encounters an error.
+#ifdef DEBUG
+void
+__error__(char *pcFilename, uint32_t ui32Line)
+{
+}
+#endif
+
+/* ========================================================================= */
+
+/**
+ * Pong stuff
+ */
+
+#define LCD_WIDTH 128
+#define LCD_HEIGHT 64
+
+#define PLAYER_UNKNOWN 0
+#define PLAYER_1 1
+#define PLAYER_2 2
+
+#define BALL_RADIUS 2
+
+#define PADDLE_HEIGHT 20
+#define PADDLE_WIDTH 2
+#define PADDLE_P1_X_POS LCD_WIDTH / 8
+#define PADDLE_P2_X_POS LCD_WIDTH * 7 / 8
+
+#define DIR_TYPE_STATIONARY 0
+#define DIR_TYPE_UP 1
+#define DIR_TYPE_DOWN 2
+#define DIR_TYPE_LEFT 3
+#define DIR_TYPE_RIGHT 4
+
+#define NUM_ROUNDS 5
+
+// pong global variables
+
+char score_p1 = 0x30; // ASCII '0'
+char score_p2 = 0x30; // ASCII '0'
+
+uint8_t ball_position_x = LCD_WIDTH / 2;
+uint8_t ball_position_y = LCD_HEIGHT / 2;
+uint8_t ball_direction_x = DIR_TYPE_STATIONARY;
+uint8_t ball_direction_y = DIR_TYPE_STATIONARY;
+
+uint8_t p1_position = LCD_HEIGHT / 2;
+uint8_t p2_position = LCD_HEIGHT / 2;
+
+uint8_t p1_move_dir = DIR_TYPE_STATIONARY;
+uint8_t p2_move_dir = DIR_TYPE_STATIONARY;
+uint8_t last_winner = PLAYER_UNKNOWN;
+bool is_release = false;
+bool is_game_over = false;
+
+/* ========================================================================= */
+
+/**
+ * Pong drawing tools
+ */
+
+void DrawCentreDottedLine()
+{
+    uint8_t y;
+
+    for (y = 0; y < LCD_HEIGHT; y++)
+    {
+        if (!(y % 5 == 0) && !(((y + 1) % 5 == 0)))
+        {
+            DrawPixel(LCD_WIDTH / 2, y);
+        }
+    }
+}
+
+void DrawBall(uint8_t x, uint8_t y, bool clear)
+{
+    int8_t i, j;
+        
+    for (j = -BALL_RADIUS; j <= BALL_RADIUS; j++)
+        for (i = -BALL_RADIUS; i <= BALL_RADIUS; i++)
+            if (i * i + j * j <= BALL_RADIUS * BALL_RADIUS)
+                if (clear)
+                    ClearPixel(x + i, y + j);
+                else
+                    DrawPixel(x + i, y + j);
+}
+
+void DrawPaddleP1(uint8_t y)
+{
+    int8_t i, j;
+
+    for (j = -PADDLE_HEIGHT / 2; j <= PADDLE_HEIGHT / 2; j++)
+        for (i = 0; i < PADDLE_WIDTH; i++)
+            DrawPixel(PADDLE_P1_X_POS + i, y + j);
+}
+
+void DrawPaddleP2(uint8_t y)
+{
+    int8_t i, j;
+
+    for (j = -PADDLE_HEIGHT / 2; j <= PADDLE_HEIGHT / 2; j++)
+        for (i = 0; i < PADDLE_WIDTH; i++)
+            DrawPixel(PADDLE_P2_X_POS + i, y + j);
+}
+
+void DrawScores(uint8_t score_p1, uint8_t score_p2)
+{
+    CursorPos(5, 0);
+    PutcharLCD(score_p1);
+    CursorPos(15, 0);
+    PutcharLCD(score_p2);
+}
+
+void DrawGameOver(uint8_t is_p1_winner)
+{
+    char text[] = "GAME  OVER";
+    int8_t i;
+
+    CursorPos(6, 3);
+    for (i = 0; i < strlen(text); i++)
+    {
+        PutcharLCD(text[i]);
+    }
+}
+
+void TestDrawing()
+{
+    DrawPaddleP1(p1_position);
+    DrawPaddleP2(p2_position);
+    DrawBall(ball_position_x, ball_position_y, false);
+    DrawGameOver(false);
+}
+
+/* ========================================================================= */
+
+/**
+ * Gameplay tools
+ */
+
+void PongInit()
+{
+    DrawCentreDottedLine();
+    DrawScores(score_p1, score_p2);
+    DrawPaddleP1(p1_position);
+    DrawPaddleP2(p2_position);
+    DrawBall(ball_position_x, ball_position_y, false);
+}
+
+
+
+void ResetBall()
+{
+    DrawBall(ball_position_x, ball_position_y, true);
+    ball_position_x = LCD_WIDTH / 2;
+    ball_position_y = LCD_HEIGHT / 2;
+    ball_direction_x = DIR_TYPE_STATIONARY;
+    ball_direction_y = DIR_TYPE_STATIONARY;
+    is_release = false;
+}
+
+void HandleScores()
+{
+    if (ball_position_x == 0)
+    {
+        score_p2++;
+        ResetBall();
+        last_winner = PLAYER_2;
+    }
+    if (ball_position_x == LCD_WIDTH)
+    {
+        score_p1++;
+        ResetBall();
+        last_winner = PLAYER_1;
+    }
+
+    if (score_p1 == 0x30 + NUM_ROUNDS)
+    {
+        DrawGameOver(true);
+        is_game_over = true;
+    }
+    else if (score_p2 == 0x30 + NUM_ROUNDS)
+    {
+        DrawGameOver(true);
+        is_game_over = true;
+    }
+}
+
+/* ========================================================================= */
+
+/**
+ * Dynamics tools
+ */
+
+void MovePaddleP1(uint8_t direction)
+{
+    uint8_t i;
+        
+    switch (direction)
+    {        
+        case DIR_TYPE_UP:
+        {
+            // clear highest pixel
+            for (i = 0; i < PADDLE_WIDTH; i++)
+                ClearPixel(PADDLE_P1_X_POS + i, p1_position + PADDLE_HEIGHT / 2);
+            // move up
+            p1_position--;
+            // stop going off screen
+            if (p1_position <= PADDLE_HEIGHT / 2)
+                p1_position = PADDLE_HEIGHT / 2;
+            // redraw
+            DrawPaddleP1(p1_position);
+        }
+        break;
+
+        case DIR_TYPE_DOWN:
+        {
+            // clear lowest pixel
+            for (i = 0; i < PADDLE_WIDTH; i++)
+                ClearPixel(PADDLE_P1_X_POS + i, p1_position - PADDLE_HEIGHT / 2);
+            // move down
+            p1_position++;
+            // stop going off screen
+            if (p1_position >= LCD_HEIGHT - PADDLE_HEIGHT / 2)
+                p1_position = LCD_HEIGHT - PADDLE_HEIGHT / 2;
+            // redraw
+            DrawPaddleP1(p1_position);
+        }
+        break;   
+    }
+}
+
+void MovePaddleP2(uint8_t direction)
+{
+    uint8_t i;
+        
+    switch (direction)
+    {
+        case DIR_TYPE_UP:
+            // clear highest pixel
+            for (i = 0; i < PADDLE_WIDTH; i++)
+                ClearPixel(PADDLE_P2_X_POS + i, p2_position + PADDLE_HEIGHT / 2);
+            // move up
+            p2_position--;
+            // stop going off screen
+            if (p2_position <= PADDLE_HEIGHT / 2)
+                p2_position = PADDLE_HEIGHT / 2;
+            // redraw
+            DrawPaddleP2(p2_position);
+            break;
+
+        case DIR_TYPE_DOWN:
+            // clear lowest pixel
+            for (i = 0; i < PADDLE_WIDTH; i++)
+                ClearPixel(PADDLE_P2_X_POS + i, p2_position - PADDLE_HEIGHT / 2);
+            // move down
+            p2_position++;
+            // stop going off screen
+            if (p2_position >= LCD_HEIGHT - PADDLE_HEIGHT / 2)
+                p2_position = LCD_HEIGHT - PADDLE_HEIGHT / 2;
+            // redraw
+            DrawPaddleP2(p2_position);
+            break;
+    }
+}
+
+void MoveBall(uint8_t x_direction, uint8_t y_direction)
+{
+    DrawBall(ball_position_x, ball_position_y, true);
+    switch (x_direction)
+    {
+        case DIR_TYPE_LEFT:
+            ball_position_x--;
+            break;
+        case DIR_TYPE_RIGHT:
+            ball_position_x++;
+            break;
+    }
+    switch (y_direction)
+    {
+        case DIR_TYPE_UP:
+            ball_position_y--;
+            break;
+        case DIR_TYPE_DOWN:
+            ball_position_y++;
+            break;
+    }
+
+    // HACK - redraw pong, as current DrawBall(x, y, false) method clears pixels
+    // This could be improved by only clearing the pixels needed
+    PongInit();
+}
+
+void DynamicsTick()
+{
+    // bounce off top/bottom walls
+    if (ball_position_y == 0)
+        ball_direction_y = DIR_TYPE_DOWN;
+    else if (ball_position_y == LCD_HEIGHT)
+        ball_direction_y = DIR_TYPE_UP;
+
+    uint8_t paddle_third = PADDLE_HEIGHT / 3;
+    
+    // bounce off p1 paddle
+    if ((ball_direction_x == DIR_TYPE_LEFT) &&
+
+        (ball_position_x == PADDLE_P1_X_POS) &&
+        (ball_position_y >= p1_position - PADDLE_HEIGHT / 2) &&
+        (ball_position_y <= p1_position + PADDLE_HEIGHT / 2))
+    {
+        ball_direction_x = DIR_TYPE_RIGHT;
+
+        // handle up/down direction for p1 paddle position
+        if ((ball_position_y >= p1_position - PADDLE_HEIGHT / 2) &&
+            (ball_position_y <= p1_position - PADDLE_HEIGHT / 2 + paddle_third))
+            ball_direction_y = DIR_TYPE_UP;
+        if ((ball_position_y >= p1_position - PADDLE_HEIGHT / 2 + paddle_third) &&
+            (ball_position_y <= p1_position - PADDLE_HEIGHT / 2 + 2 * paddle_third))
+            ball_direction_y = DIR_TYPE_STATIONARY;
+        if ((ball_position_y >= p1_position - PADDLE_HEIGHT / 2 + 2 * paddle_third) &&
+            (ball_position_y <= p1_position - PADDLE_HEIGHT / 2 + 3 * paddle_third))
+            ball_direction_y = DIR_TYPE_DOWN;
+    }
+    
+
+    // bounce off p2 paddle
+    if ((ball_direction_x == DIR_TYPE_RIGHT) &&
+        (ball_position_x == PADDLE_P2_X_POS) &&
+        (ball_position_y >= p2_position - PADDLE_HEIGHT / 2) &&
+        (ball_position_y <= p2_position + PADDLE_HEIGHT / 2))
+    {
+        ball_direction_x = DIR_TYPE_LEFT;
+
+        // handle up/down direction for p2 paddle position
+        if ((ball_position_y >= p2_position - PADDLE_HEIGHT / 2) &&
+            (ball_position_y <= p2_position - PADDLE_HEIGHT / 2 + paddle_third))
+            ball_direction_y = DIR_TYPE_UP;
+        if ((ball_position_y >= p2_position - PADDLE_HEIGHT / 2 + paddle_third) &&
+            (ball_position_y <= p2_position - PADDLE_HEIGHT / 2 + 2 * paddle_third))
+            ball_direction_y = DIR_TYPE_STATIONARY;
+        if ((ball_position_y >= p2_position - PADDLE_HEIGHT / 2 + 2 * paddle_third) &&
+            (ball_position_y <= p2_position - PADDLE_HEIGHT / 2 + 3 * paddle_third))
+            ball_direction_y = DIR_TYPE_DOWN;    
+    }
+
+    // scores
+    HandleScores();
+        
+    MoveBall(ball_direction_x, ball_direction_y);
+}
+
+void TestDynamics()
+{
+    ball_direction_x = DIR_TYPE_RIGHT;
+    ball_direction_y = DIR_TYPE_STATIONARY;
+    
+    MoveBall(ball_direction_x, ball_direction_y);
+}
+
+/* ========================================================================= */
+
+/**
+ * The UART interrupt handler.
+ */
+
+void UARTIntHandler(void)
+{
+    uint32_t ui32Status;
+    uint8_t value;
+
+    // Get the interrrupt status.
+    ui32Status = ROM_UARTIntStatus(UART0_BASE, true);
+
+    // Clear the asserted interrupts.
+    ROM_UARTIntClear(UART0_BASE, ui32Status);
+
+    // Loop while there are characters in the receive FIFO.
+    while(ROM_UARTCharsAvail(UART0_BASE))
+    {
+        // Read the next character from the UART and write it back to the UART and LCD.
+        value = ROM_UARTCharGetNonBlocking(UART0_BASE);
+        ROM_UARTCharPutNonBlocking(UART0_BASE, value);
+
+        //PutcharLCD(value); // test
+
+        /* Can't do due to LCD buffer overflow issue when doing too many read's :(
+           This approach is ideal, as its event driven.
+        switch (value)
+        {
+            case 'a':
+            case 'A':
+                MovePaddleP1(DIR_TYPE_UP);
+                break;
+
+            case 'z':
+            case 'Z':
+                MovePaddleP1(DIR_TYPE_DOWN);
+                break;
+
+            case ';':
+            case ':':
+                MovePaddleP2(DIR_TYPE_UP);
+                break;
+
+            case '.':
+            case '>':
+                MovePaddleP2(DIR_TYPE_DOWN);
+                break;
+
+            case 0x20:
+            case 'r':
+                ReleaseBall();
+                break;
+                                            
+        }
+        */
+
+        // Work around solution for the above.
+        // This approach is not ideal, as the paddles speed is equal to the ball speed
+        switch (value)
+        {
+            case 'a':
+            case 'A':
+                p1_move_dir = DIR_TYPE_UP;
+                break;
+
+            case 'z':
+            case 'Z':
+                p1_move_dir = DIR_TYPE_DOWN;
+                break;
+
+            case ';':
+            case ':':
+                p2_move_dir = DIR_TYPE_UP;
+                break;
+
+            case '.':
+            case '>':
+                p2_move_dir = DIR_TYPE_DOWN;
+                break;
+
+            case 0x20:
+            case 'r':
+                is_release = true;
+                break;
+                                            
+        }
+			
+        // Blink the LED to show a character transfer is occuring.
+        GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_2, GPIO_PIN_2);
+
+        // Delay for 1 millisecond.  Each SysCtlDelay is about 3 clocks.
+        SysCtlDelay(SysCtlClockGet() / (1000 * 3));
+
+        // Turn off the LED
+        GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_2, 0);
+
+    }
+}
+
+/* ========================================================================= */
+
+/**
+ * Send a string to the UART.
+ */
+
+void UARTSend(const uint8_t *pui8Buffer, uint32_t ui32Count)
+{
+    // Loop while there are more characters to send.
+    while(ui32Count--)
+    {
+        // Write the next character to the UART.
+        ROM_UARTCharPutNonBlocking(UART0_BASE, *pui8Buffer++);
+    }
+}
+
+/* ========================================================================= */
+
+/**
+ * Core
+ */
+
+int main(void)
+{
+    // Enable lazy stacking for interrupt handlers.  This allows floating-point
+    // instructions to be used within interrupt handlers, but at the expense of
+    // extra stack usage.
+    ROM_FPUEnable();
+    ROM_FPULazyStackingEnable();
+
+    // Set the clocking to run directly from the crystal.
+    ROM_SysCtlClockSet(SYSCTL_SYSDIV_1 | SYSCTL_USE_OSC | SYSCTL_OSC_MAIN |
+                       SYSCTL_XTAL_16MHZ);
+
+    // Enable the GPIO port that is used for the on-board LED.
+    ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
+
+    // Enable the GPIO pins for the LED (PF2).
+    ROM_GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_2);
+
+    // Enable the peripherals used by this example.
+    ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
+    ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
+
+    // Enable processor interrupts.
+    ROM_IntMasterEnable();
+
+    // Set GPIO A0 and A1 as UART pins.
+    GPIOPinConfigure(GPIO_PA0_U0RX);
+    GPIOPinConfigure(GPIO_PA1_U0TX);
+    ROM_GPIOPinTypeUART(GPIO_PORTA_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+
+    // Configure the UART for 115,200, 8-N-1 operation.
+    ROM_UARTConfigSetExpClk(UART0_BASE, ROM_SysCtlClockGet(), 115200,
+                            (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE |
+                             UART_CONFIG_PAR_NONE));
+
+    // Enable the UART interrupt.
+    ROM_IntEnable(INT_UART0);
+    ROM_UARTIntEnable(UART0_BASE, UART_INT_RX | UART_INT_RT);
+
+    // Prompt welcome message
+    UARTSend((uint8_t *)"\033[2JWelecome to Pong! ", 16);
+    
+    InitLCD();
+    ClearLCD();
+    
+    PongInit();
+
+    //TestDrawing(); 
+    //TestDynamics();
+   
+    // Loop forever processing motion ticks
+    while (1)
+    {
+        
+        DynamicsTick();
+
+        // start of work around as discussed in the UART read interrupt above
+        
+        switch (p1_move_dir)
+        {
+
+            case DIR_TYPE_UP:
+                MovePaddleP1(DIR_TYPE_UP);
+                p1_move_dir = DIR_TYPE_STATIONARY;
+                break;
+
+            case DIR_TYPE_DOWN:
+                MovePaddleP1(DIR_TYPE_DOWN);
+                p1_move_dir = DIR_TYPE_STATIONARY;
+                break;
+        }
+
+        switch (p2_move_dir)
+        {
+            case DIR_TYPE_UP:
+                MovePaddleP2(DIR_TYPE_UP);
+                p2_move_dir = DIR_TYPE_STATIONARY;
+                break;
+
+            case DIR_TYPE_DOWN:
+                MovePaddleP2(DIR_TYPE_DOWN);
+                p2_move_dir = DIR_TYPE_STATIONARY;
+                break;
+        }
+
+        // handle release
+        if (is_release)
+        {
+
+            if (is_game_over)
+            {
+                score_p1 = 0x30;
+                score_p2 = 0x30;
+                DrawScores(score_p1, score_p2);
+                ClearLCD();
+                PongInit();
+                is_game_over = false;
+            }
+            
+            switch (last_winner)
+            {
+                case PLAYER_UNKNOWN:
+                case PLAYER_1:
+                    ball_direction_x = DIR_TYPE_LEFT;
+                    break;
+                case PLAYER_2:
+                    ball_direction_x = DIR_TYPE_RIGHT;
+                    break;
+            }
+            ball_direction_y = DIR_TYPE_STATIONARY;
+            is_release = false;
+        }
+
+        // end of work around as discussed in the UART read interrupt above
+        
+        // ball speed - 100ms for now - can get faster with better hack removed from MoveBall()
+        SysCtlDelay(SysCtlClockGet() / (1000 * 3) * 100);
+
+    }
+        
+}

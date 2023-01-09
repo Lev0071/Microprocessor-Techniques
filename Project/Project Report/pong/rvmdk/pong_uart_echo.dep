@@ -1,0 +1,17 @@
+Dependencies for Project 'uart_echo', Target 'uart_echo': (DO NOT MODIFY !)
+F (.\startup_rvmdk.S)(0x580F3268)(--cpu Cortex-M4.fp --pd "__EVAL SETA 1" -g --apcs=interwork --pd "__MICROLIB SETA 1"-IZ:\home\cole\0\tiva_pong_game\src\pong\RTE-IC:\Keil_v5\ARM\PACK\ARM\CMSIS\4.5.0\CMSIS\Include-IC:\Keil_v5\ARM\PACK\Keil\TM4C_DFP\1.1.0\Device\Include\TM4C123--pd "__UVISION_VERSION SETA 521" --pd "_RTE_ SETA 1" --pd "TM4C123GH6PM SETA 1"-o .\rvmdk\startup_rvmdk.o --depend .\rvmdk\startup_rvmdk.d)
+F (.\uart_echo.c)(0x5811E4DF)(-c --cpu Cortex-M4.fp -D__EVAL -D__MICROLIB -g -O2 --apcs=interwork --split_sections -I ..\..\..\.. --c99-IZ:\home\cole\0\tiva_pong_game\src\pong\RTE-IC:\Keil_v5\ARM\PACK\ARM\CMSIS\4.5.0\CMSIS\Include-IC:\Keil_v5\ARM\PACK\Keil\TM4C_DFP\1.1.0\Device\Include\TM4C123-D__UVISION_VERSION="521" -D_RTE_ -DTM4C123GH6PM -Drvmdk -DPART_TM4C123GH6PM -DTARGET_IS_TM4C123_RB1-o .\rvmdk\uart_echo.o --omf_browse .\rvmdk\uart_echo.crf --depend .\rvmdk\uart_echo.d)
+I (C:\Keil_v5\ARM\ARMCC\include\string.h)(0x574E13F6)
+I (C:\Keil_v5\ARM\ARMCC\include\stdint.h)(0x574E13F6)
+I (C:\Keil_v5\ARM\ARMCC\include\stdbool.h)(0x574E13F6)
+I (inc/hw_ints.h)(0x580F3275)
+I (inc/hw_memmap.h)(0x580F3275)
+I (driverlib/gpio.h)(0x580F3255)
+I (driverlib/pin_map.h)(0x580F3255)
+I (driverlib/rom.h)(0x580F3255)
+I (driverlib/sysctl.h)(0x580F3255)
+I (driverlib/uart.h)(0x580F3256)
+I (lcd.h)(0x5811DD46)
+F (.\lcd.lib)(0x561B9DC6)()
+F (.\driverlib\rvmdk\driverlib.lib)(0x580F33C2)()
+F (.\readme.txt)(0x580F3268)()
